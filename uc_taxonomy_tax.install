@@ -1,0 +1,48 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Install hooks for uc_vat_with_taxonomy.module.
+ */
+
+/**
+ * Implementation of hook_schema().
+ */
+function uc_taxonomy_tax_schema() {
+  $schema = array();
+
+  $schema['uc_taxonomy_tax'] = array(
+    'fields' => array(
+      'tax_id' => array(
+        'description' => t('The tax rate id from the uc_taxes table.'),
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'size' => 'tiny',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'taxed_product_terms' => array(
+        'description' => t('Serialized array of taxonomy terms to be taxed.'),
+        'type' => 'text',
+        'serialize' => TRUE,
+      ),
+    ),
+    'primary key' => array('tax_id'),
+  );
+  return $schema;
+}
+
+/**
+ * Implementation of hook_install().
+ */
+function uc_taxonomy_tax_install() {
+  drupal_install_schema('uc_taxonomy_tax');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function uc_taxonomy_tax_uninstall() {
+  drupal_uninstall_schema('uc_taxonomy_tax');
+}

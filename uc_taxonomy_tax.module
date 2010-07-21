@@ -1,0 +1,249 @@
+<?php
+// $Id$
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function uc_taxonomy_tax_form_alter(&$form, $form_state, $form_id) {
+  if ($form_id == 'uc_taxes_form') {
+    $default_values = FALSE;
+    if (is_numeric($form['id']['#value'])) {
+      $default_values = uc_taxonomy_tax_rates_load($form['id']['#value']);
+    }
+    // Create taxonomy terms form element with vocabularies associated to product types.
+    $product_types = uc_product_types();
+    $placeholders = implode(',', array_fill(0, count($product_types), '"%s"'));
+    $sql = 'SELECT t.tid, t.name AS t_name, v.name AS v_name FROM {term_data} t '
+    . 'JOIN {vocabulary} v ON t.vid = v.vid '
+    . 'JOIN {vocabulary_node_types} n ON v.vid = n.vid '
+    . 'WHERE n.type IN ( ' . $placeholders . ') ORDER BY v.weight, t.weight';
+    $result = db_query($sql, $product_types);
+    $options = array();
+    while ($row = db_fetch_object($result)) $options[$row->v_name][$row->tid] = $row->t_name;
+    $taxed_products_group = array();
+    $taxed_product_terms = array(
+      '#type' => 'select',
+      '#title' => t('Taxed taxonomy terms'),
+      '#description' => t('Select taxonomy terms for this tax rate.  Items with these terms will be taxed regardless of the taxed product types selected below.'),
+      '#options' => $options,
+      '#default_value' => $default_values ? $default_values->taxed_product_terms : array(),
+      '#multiple' => TRUE,
+    );
+    // Insert new form element just before the taxed_product_types form element.
+    foreach ($form as $key => $value) {
+      if ($key == 'taxed_product_types') {
+        $new_form['taxed_product_terms'] = $taxed_product_terms;
+      }
+      $new_form[$key] = $value;
+    }
+    $form = $new_form;
+    $form['#submit'][] = 'uc_taxonomy_tax_form_uc_taxes_form_submit';
+  }
+  elseif ($form_id == 'uc_taxes_delete_form') {
+    $form['#submit'][] = 'uc_taxonomy_tax_form_uc_taxes_delete_form';
+  }
+}
+
+/**
+ * Submit handler for uc_taxes_form.
+ *
+ * Adds taxonomy terms to the uc_taxonomy_tax table.
+ */
+function uc_taxonomy_tax_form_uc_taxes_form_submit(&$form, &$form_state) {
+  $values = $form_state['values'];
+  $values['tax_id'] = $values['id'];
+  // A new tax rate has just been inserted
+  if (empty($values['tax_id'])) {
+    $values['tax_id'] = db_last_insert_id('uc_taxes', 'id');
+  }
+  // Update an existing record
+  elseif (db_result(db_query('SELECT tax_id FROM {uc_taxonomy_tax} WHERE tax_id = %d', $values['tax_id']))) {
+    drupal_write_record('uc_taxonomy_tax', $values, 'tax_id');
+    return;
+  }
+  // Insert a new row
+  drupal_write_record('uc_taxonomy_tax', $values);
+}
+
+/**
+ * Submit handler for uc_taxes_delete_form.
+ *
+ * Removes deleted tax rates from the uc_taxonomy_tax table.
+ */
+function uc_taxonomy_tax_form_uc_taxes_delete_form(&$form, &$form_state) {
+  $values = $form_state['values'];
+  if ($values['op'] == 'Delete') {
+    db_query('DELETE FROM {uc_taxonomy_tax} WHERE tax_id = %d', $values['rate_id']);
+  }
+}
+
+/**
+ * Implementation of hook_calculate_tax().
+ */
+function uc_taxonomy_tax_calculate_tax($order) {
+  global $user;
+  if (is_numeric($order)) {
+    $order = uc_order_load($order);
+    $account = user_load(array('uid' => $order->uid));
+  }
+  elseif ((int) $order->uid) {
+    $account = user_load(array('uid' => intval($order->uid)));
+  }
+  else {
+    $account = $user;
+  }
+  if (!is_object($order)) {
+    return array();
+  }
+  if (empty($order->delivery_postal_code)) {
+    $order->delivery_postal_code = $order->billing_postal_code;
+  }
+  if (empty($order->delivery_zone)) {
+    $order->delivery_zone = $order->billing_zone;
+  }
+  if (empty($order->delivery_country)) {
+    $order->delivery_country = $order->billing_country;
+  }
+
+  $order->taxes = array();
+  if (isset($order->order_status)) {
+    $state = uc_order_status_data($order->order_status, 'state');
+    $use_same_rates = in_array($state, array('payment_received', 'completed'));
+  }
+  else {
+    $use_same_rates = FALSE;
+  }
+
+  $arguments = array(
+    'order' => array(
+      '#entity' => 'uc_order',
+      '#title' => t('Order'),
+      '#data' => $order,
+    ),
+    'tax' => array(
+      '#entity' => 'tax',
+      '#title' => t('Tax rule'),
+    ),
+    'account' => array(
+      '#entity' => 'user',
+      '#title' => t('User'),
+      '#data' => $account,
+    ),
+  );
+  if (is_array($order->products)) {
+    $products_to_tax = array();
+    foreach ($order->products as $item) {
+      $products_to_tax[] = $item->nid;
+    }
+    $placeholders = implode(',', array_fill(0, count($products_to_tax), '%d'));
+    $result = db_query('SELECT nid, tid FROM {term_node} WHERE nid IN (' . $placeholders . ')', $products_to_tax);
+    $terms_to_tax = array();
+    while ($row = db_fetch_object($result)) {
+      $terms_to_tax[$row->nid][] = $row->tid;
+    }
+    $predicates = ca_load_trigger_predicates('calculate_taxes');
+    foreach (uc_taxonomy_tax_rates_load() as $tax) {
+      if ($use_same_rates) {
+        foreach ((array) $order->line_items as $old_line) {
+          if ($old_line['type'] == 'tax' && $old_line['data']['tax_id'] == $tax->id) {
+            $tax->rate = $old_line['data']['tax_rate'];
+            break;
+          }
+        }
+      }
+      $arguments['tax']['#data'] = $tax;
+      if (ca_evaluate_conditions($predicates['uc_taxes_' . $tax->id], $arguments)) {
+        $line_item = uc_taxonomy_tax_apply_tax($tax, $order->products, $terms_to_tax);
+        if ($line_item) {
+          $order->taxes[$line_item->id] = $line_item;
+        }
+      }
+    }
+    return $order->taxes;
+  }
+}
+
+/**
+ * Creates the tax line item by checking taxonomy terms for each product.
+ * @param $tax
+ *   The tax object.
+ * @param $products
+ *   The array of products in the order
+ * @param $terms_to_tax
+ *   An array of terms found for each item in the cart, keyed by their nid
+ * @return
+ *   A tax line item (if there is tax to apply) with a unique tax id.
+ */
+function uc_taxonomy_tax_apply_tax($tax, $products, $terms_to_tax) {
+  $amount = 0;
+  $taxable_amount = 0;
+  foreach ($products as $item) {
+    if (is_array($terms_to_tax[$item->nid])) {
+      foreach ($terms_to_tax[$item->nid] as $term) {
+        if (in_array($term, $tax->taxed_product_terms) && ($tax->shippable == 0 || $item->data['shippable'] == 1)) {
+        $taxable_amount += $item->price * $item->qty;
+        break;
+        }
+      }
+    }
+  }
+  $amount = $taxable_amount * $tax->rate;
+  if ($amount) {
+    $safe_id = uc_taxonomy_tax_get_safe_id($tax->id);
+    $line_item = (object)array(
+        'id' => $safe_id,
+        'name' => $tax->name,
+        'amount' => $amount,
+        'weight' => $tax->weight,
+        'summed' => 1,
+    );
+    $line_item->data = array(
+      // Original tax id can still be inserted here.
+      'tax_id' => $tax->id,
+      'tax_rate' => $tax->rate,
+      'taxable_amount' => $taxable_amount,
+      'tax_jurisdiction' => $tax->name,
+    );
+    return $line_item;
+  }
+}
+
+/**
+ * Load taxonomy tax rates from the database.
+ */
+function uc_taxonomy_tax_rates_load($rate_id = NULL) {
+  static $rates = array();
+  if (empty($rates)) {
+    $result = db_query('SELECT * FROM {uc_taxes} u JOIN {uc_taxonomy_tax} t ON u.id = t.tax_id ORDER BY u.weight');
+    while ($rate = db_fetch_object($result)) {
+      $rate->taxed_product_terms = unserialize($rate->taxed_product_terms);
+      $rate->taxed_product_types = unserialize($rate->taxed_product_types);
+      $rates[$rate->id] = $rate;
+    }
+  }
+  // Return a rate as specified.
+  if ($rate_id) {
+    if (isset($rates[$rate_id])) {
+      return $rates[$rate_id];
+    }
+    // If this rate doesn't have a taxonomy entry then return FALSE.
+    else {
+      return FALSE;
+    }
+  }
+  else {
+    return $rates;
+  }
+}
+
+/**
+ * @return A safe unique numeric tax rate id.
+ *
+ * Tax line items must not have the same id, and it must be numeric.
+ * To avoid any clashes with rates from uc_taxes and this module
+ * we add the id onto the highest tax rate id.
+ *
+ */
+function uc_taxonomy_tax_get_safe_id($id) {
+  return max(array_keys(uc_taxes_rate_load())) + $id;
+}

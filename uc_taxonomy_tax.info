@@ -1,0 +1,6 @@
+; $Id: 
+name = Ubercart Taxonomy Tax
+description = Allows tax rates to be assigned to taxonomy terms. 
+dependencies[] = uc_taxes
+package = "Ubercart - extra"
+core = 6.x
