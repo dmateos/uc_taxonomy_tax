@@ -178,7 +178,7 @@ function uc_taxonomy_tax_apply_tax($tax, $products, $terms_to_tax) {
   $amount = 0;
   $taxable_amount = 0;
   foreach ($products as $item) {
-    if (is_array($terms_to_tax[$item->nid])) {
+    if (is_array($terms_to_tax[$item->nid]) && !in_array($item->type, $tax->taxed_product_types)) {
       foreach ($terms_to_tax[$item->nid] as $term) {
         if (in_array($term, $tax->taxed_product_terms) && ($tax->shippable == 0 || $item->data['shippable'] == 1)) {
         $taxable_amount += $item->price * $item->qty;
