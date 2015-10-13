@@ -32,16 +32,3 @@ function uc_taxonomy_tax_schema() {
   return $schema;
 }
 
-/**
- * Implementation of hook_install().
- */
-function uc_taxonomy_tax_install() {
-  drupal_install_schema('uc_taxonomy_tax');
-}
-
-/**
- * Implementation of hook_uninstall().
- */
-function uc_taxonomy_tax_uninstall() {
-  drupal_uninstall_schema('uc_taxonomy_tax');
-}
