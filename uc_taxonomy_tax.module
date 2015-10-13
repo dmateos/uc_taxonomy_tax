@@ -1,5 +1,17 @@
 <?php
 
+function uc_taxonomy_tax_is_taxable($product) {
+    $result = db_query('SELECT * FROM {uc_taxes} u JOIN {uc_taxonomy_tax} t ON u.id = t.tax_id ORDER BY u.weight');
+    foreach($result as $rate) {
+        $taxed_product_terms = unserialize($rate->taxed_product_terms);
+        $r = db_query("SELECT * FROM {taxonomy_index} WHERE tid IN (:tids) AND nid = :nid", array(":tids" => $taxed_product_terms, ":nid" => $product->nid));
+        if($r->rowCount() > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Implementation of hook_form_alter().
  */
@@ -135,8 +147,7 @@ function uc_taxonomy_tax_uc_calculate_tax($order) {
     foreach ($order->products as $item) {
       $products_to_tax[] = $item->nid;
     }
-    $placeholders = implode(',', array_fill(0, count($products_to_tax), '?'));
-    $result = db_query('SELECT nid, tid FROM {taxonomy_index} WHERE nid IN (' . $placeholders . ')', $products_to_tax);
+    $result = db_query('SELECT nid, tid FROM {taxonomy_index} WHERE nid IN (:products)', array(":products" => $products_to_tax));
     $terms_to_tax = array();
     foreach($result as $row) {
       $terms_to_tax[$row->nid][] = $row->tid;
