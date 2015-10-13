@@ -3,4 +3,10 @@ name = Ubercart Taxonomy Tax
 description = Allows tax rates to be assigned to taxonomy terms. 
 dependencies[] = uc_taxes
 package = "Ubercart - extra"
-core = 6.x
+core = 7.x
+; Information added by drupal.org packaging script on 2013-10-19
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "uc_taxonomy_tax"
+datestamp = "1382149672"
+
